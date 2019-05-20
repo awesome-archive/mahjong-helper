@@ -108,8 +108,9 @@ func TestCalculateShantenWithImproves14Closed(t *testing.T) {
 	tiles = "66778p 1122345s 77z"
 	tiles = "67778p 1122345s 77z"
 	tiles = "3336888m 678p 5678s"
+	tiles = "145679p 1s 1234567z"
 	playerInfo := model.NewSimplePlayerInfo(MustStrToTiles34(tiles), nil)
-	playerInfo.NumRedFives[2] = 1
+	//playerInfo.NumRedFives[2] = 1
 	//playerInfo.IsTsumo = true
 	//playerInfo.LeftTiles34 = InitLeftTiles34WithTiles34(MustStrToTiles34("388m 113668p 566s 45556z")) // 注意手牌也算上
 	//playerInfo.DiscardTiles = []int{MustStrToTile34("9p")}
@@ -205,4 +206,35 @@ func TestQ300(t *testing.T) {
 	} else {
 		t.Log("无向听倒退的切牌")
 	}
+}
+
+func Test_calculateIsolatedTileValue(t *testing.T) {
+	newPI := func(selfWindTile int, roundWindTile int, discardedHumanTiles string) *model.PlayerInfo {
+		return &model.PlayerInfo{
+			SelfWindTile:  selfWindTile,
+			RoundWindTile: roundWindTile,
+			LeftTiles34:   InitLeftTiles34WithTiles34(MustStrToTiles34(discardedHumanTiles)),
+		}
+	}
+
+	const eps = 1e-3
+
+	assert.InDelta(t, 100, float64(calculateIsolatedTileValue(MustStrToTile34("9m"), newPI(27, 27, "2s"))), eps)
+	assert.InDelta(t, 130, float64(calculateIsolatedTileValue(MustStrToTile34("1z"), newPI(27, 27, "2s"))), eps)
+	assert.InDelta(t, 117, float64(calculateIsolatedTileValue(MustStrToTile34("1z"), newPI(27, 27, "2s11z"))), eps)
+	assert.InDelta(t, 97, float64(calculateIsolatedTileValue(MustStrToTile34("2z"), newPI(27, 27, "2s"))), eps)
+	assert.InDelta(t, 98, float64(calculateIsolatedTileValue(MustStrToTile34("3z"), newPI(27, 27, "2s"))), eps)
+	assert.InDelta(t, 99, float64(calculateIsolatedTileValue(MustStrToTile34("4z"), newPI(27, 27, "2s"))), eps)
+	assert.InDelta(t, 115, float64(calculateIsolatedTileValue(MustStrToTile34("5z"), newPI(27, 27, "2s"))), eps)
+	assert.InDelta(t, 115, float64(calculateIsolatedTileValue(MustStrToTile34("5z"), newPI(27, 27, "2s"))), eps)
+	assert.InDelta(t, 114, float64(calculateIsolatedTileValue(MustStrToTile34("6z"), newPI(27, 27, "2s"))), eps)
+	assert.InDelta(t, 115, float64(calculateIsolatedTileValue(MustStrToTile34("7z"), newPI(27, 27, "2s"))), eps)
+	assert.InDelta(t, 103.5, float64(calculateIsolatedTileValue(MustStrToTile34("7z"), newPI(27, 27, "2s77z"))), eps)
+	assert.InDelta(t, 23, float64(calculateIsolatedTileValue(MustStrToTile34("7z"), newPI(27, 27, "2s777z"))), eps)
+
+	assert.InDelta(t, 114, float64(calculateIsolatedTileValue(MustStrToTile34("1z"), newPI(29, 27, "2s"))), eps)
+	assert.InDelta(t, 102.6, float64(calculateIsolatedTileValue(MustStrToTile34("1z"), newPI(29, 27, "2s11z"))), eps)
+	assert.InDelta(t, 99, float64(calculateIsolatedTileValue(MustStrToTile34("2z"), newPI(29, 27, "2s"))), eps)
+	assert.InDelta(t, 116, float64(calculateIsolatedTileValue(MustStrToTile34("3z"), newPI(29, 27, "2s"))), eps)
+	assert.InDelta(t, 97, float64(calculateIsolatedTileValue(MustStrToTile34("4z"), newPI(29, 27, "2s"))), eps)
 }
