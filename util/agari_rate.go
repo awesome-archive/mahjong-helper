@@ -6,22 +6,16 @@ func CalculateAgariRateOfEachTile(waits Waits, selfDiscards []int) map[int]float
 	// 站在其他玩家的视角，自家各个牌的安全度
 
 	tileAgariRate := map[int]float64{}
+
+	tileType27 := calcTileType27(selfDiscards)
+
 	for tile, left := range waits {
 		if left == 0 {
 			continue
 		}
 		var rate float64
 		if tile < 27 { // 数牌
-			t := tile % 9
-			if t > 4 {
-				t = 8 - t
-			}
-			// 判断是否为筋牌
-			var targetTile int
-			if t<=2 {
-				targetTile = t+3
-			}
-			rate = agariTable[t][left-1]
+			rate = agariMap[tileType27[tile]][left]
 		} else { // 字牌
 			rate = honorTileAgariTable[left-1]
 		}

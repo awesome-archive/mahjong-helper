@@ -43,6 +43,34 @@ func calcLowRiskTiles27(safeTiles34 []bool, leftTiles34 []int) []int {
 	return lowRiskTiles27
 }
 
+// 根据传入的舍牌，计算 mpz 各个牌的筋牌类型
+func calcTileType27(discardTiles []int) []tileType {
+	sujiType27 := make([]tileType, 27)
+
+	safeTiles34 := make([]int, 34)
+	// 0危险，1安全
+	for _, tile := range discardTiles {
+		safeTiles34[tile] = 1
+	}
+	for i := 0; i < 3; i++ {
+		for j := 0; j < 3; j++ {
+			idx := 9*i + j
+			sujiType27[idx] = TileTypeTable[j][safeTiles34[idx+3]]
+		}
+		for j := 3; j < 6; j++ {
+			idx := 9*i + j
+			mixSafeTile := safeTiles34[idx-3]<<1 | safeTiles34[idx+3]
+			sujiType27[idx] = TileTypeTable[j][mixSafeTile]
+		}
+		for j := 6; j < 9; j++ {
+			idx := 9*i + j
+			sujiType27[idx] = TileTypeTable[j][safeTiles34[idx-3]]
+		}
+	}
+
+	return sujiType27
+}
+
 type RiskTiles34 []float64
 
 // 根据巡目（对于对手而言）、现物、立直后通过的牌、NC、Dora，来计算基础铳率
