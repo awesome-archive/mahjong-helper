@@ -581,7 +581,9 @@ func (l WaitsWithImproves14List) Sort(needImprove bool) {
 			// 单独比较浮牌
 			if l[i].isIsolatedDiscardTile && l[j].isIsolatedDiscardTile {
 				// 优先切掉价值最低的浮牌
-				return l[i].isolatedDiscardTileValue < l[j].isolatedDiscardTileValue
+				if l[i].isolatedDiscardTileValue != l[j].isolatedDiscardTileValue {
+					return l[i].isolatedDiscardTileValue < l[j].isolatedDiscardTileValue
+				}
 			}
 		}
 
