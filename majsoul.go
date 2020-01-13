@@ -2,11 +2,12 @@ package main
 
 import (
 	"fmt"
-	"time"
 	"github.com/fatih/color"
 	"github.com/EndlessCheng/mahjong-helper/util"
 	"github.com/EndlessCheng/mahjong-helper/util/model"
 	"sort"
+	"time"
+	"github.com/EndlessCheng/mahjong-helper/platform/majsoul/proto/lq"
 )
 
 type majsoulMessage struct {
@@ -14,10 +15,13 @@ type majsoulMessage struct {
 	AccountID int `json:"account_id"`
 
 	// 友人列表
-	Friends []*majsoulFriend `json:"friends"`
+	Friends lq.FriendList `json:"friends"`
 
-	// 新获取到的牌谱列表
+	// 新获取到的牌谱基本信息列表
 	RecordBaseInfoList []*majsoulRecordBaseInfo `json:"record_list"`
+
+	// 分享的牌谱基本信息
+	SharedRecordBaseInfo *majsoulRecordBaseInfo `json:"shared_record_base_info"`
 
 	// 当前正在观看的牌谱的 UUID
 	CurrentRecordUUID string `json:"current_record_uuid"`
@@ -30,10 +34,23 @@ type majsoulMessage struct {
 	RecordClickActionIndex int    `json:"record_click_action_index"`
 	FastRecordTo           int    `json:"fast_record_to"` // 闭区间
 
+	// 观战
+	LiveBaseInfo   *majsoulLiveRecordBaseInfo `json:"live_head"`
+	LiveFastAction *majsoulRecordAction       `json:"live_fast_action"`
+	LiveAction     *majsoulRecordAction       `json:"live_action"`
+
+	// 座位变更
+	ChangeSeatTo *int `json:"change_seat_to"`
+
+	// 游戏重连时收到的数据
+	SyncGameActions []*majsoulRecordAction `json:"sync_game_actions"`
+
 	// ResAuthGame
-	IsGameStart *bool `json:"is_game_start"` // false=新游戏，true=重连
-	SeatList    []int `json:"seat_list"`
-	ReadyIDList []int `json:"ready_id_list"`
+	// {"seat_list":[x,x,x,x],"is_game_start":false,"game_config":{"category":1,"mode":{"mode":1,"ai":true,"detail_rule":{"time_fixed":60,"time_add":0,"dora_count":3,"shiduan":1,"init_point":25000,"fandian":30000,"bianjietishi":true,"ai_level":1,"fanfu":1}},"meta":{"room_id":18269}},"ready_id_list":[0,0,0]}
+	IsGameStart *bool              `json:"is_game_start"` // false=新游戏，true=重连
+	SeatList    []int              `json:"seat_list"`
+	ReadyIDList []int              `json:"ready_id_list"`
+	GameConfig  *majsoulGameConfig `json:"game_config"`
 
 	// NotifyPlayerLoadGameReady
 	//ReadyIDList []int `json:"ready_id_list"`
@@ -112,9 +129,9 @@ type majsoulRoundData struct {
 	*roundData
 
 	originJSON string
-	accountID  int
-	selfSeat   int // 自家初始座位：0-第一局的东家 1-第一局的南家 2-第一局的西家 3-第一局的北家
 	msg        *majsoulMessage
+
+	selfSeat int // 自家初始座位：0-第一局的东家 1-第一局的南家 2-第一局的西家 3-第一局的北家
 }
 
 func (d *majsoulRoundData) fatalParse(info string, msg string) {
@@ -144,6 +161,7 @@ func (d *majsoulRoundData) normalTiles(tiles interface{}) (majsoulTiles []string
 
 func (d *majsoulRoundData) parseWho(seat int) int {
 	// 转换成 0=自家, 1=下家, 2=对家, 3=上家
+	// 对三麻四麻均适用
 	who := (seat + d.dealer - d.roundNumber%4 + 4) % 4
 	return who
 }
@@ -184,83 +202,133 @@ func (d *majsoulRoundData) GetMessage() string {
 	return d.originJSON
 }
 
-func (d *majsoulRoundData) CheckMessage() bool {
+func (d *majsoulRoundData) SkipMessage() bool {
 	msg := d.msg
 
-	// 首先，获取玩家账号
+	// 没有账号 skip
+	if gameConf.currentActiveMajsoulAccountID == -1 {
+		return true
+	}
+
+	// TODO: 重构
 	if msg.SeatList != nil {
-		if d.accountID > 0 {
-			// 有 accountID 时，检查 accountID 是否正确
-			if !util.InInts(d.accountID, msg.SeatList) {
-				color.HiRed("尚未正确获取到玩家账号 ID，请您刷新网页，或开启一局人机对战（错误信息：您的账号 ID %d 不在对战列表 %v 中）", d.accountID, msg.SeatList)
-				return false
-			}
-		} else {
-			// 判断是否为人机对战，若为人机对战，则获取 accountID
-			if util.InInts(0, msg.SeatList) {
-				for _, accountID := range msg.SeatList {
-					if accountID > 0 {
-						d.accountID = accountID
-						printAccountInfo(accountID)
-						time.Sleep(2 * time.Second)
-					}
-				}
-			}
+		// 特判古役模式
+		isGuyiMode := msg.GameConfig.isGuyiMode()
+		util.SetConsiderOldYaku(isGuyiMode)
+		if isGuyiMode {
+			color.HiGreen("古役模式已开启")
+			time.Sleep(2 * time.Second)
+		}
+	} else {
+		// msg.SeatList 必须为 nil
+		if msg.ReadyIDList != nil {
+			// 打印准备信息
+			fmt.Printf("等待玩家准备 (%d/%d) %v\n", len(msg.ReadyIDList), d.playerNumber, msg.ReadyIDList)
 		}
 	}
 
-	// 没有账号直接 return false
-	if d.accountID == -1 {
-		return false
+	return false
+}
+
+func (d *majsoulRoundData) IsLogin() bool {
+	msg := d.msg
+	return msg.AccountID > 0 || msg.SeatList != nil
+}
+
+func (d *majsoulRoundData) HandleLogin() {
+	msg := d.msg
+
+	if accountID := msg.AccountID; accountID > 0 {
+		gameConf.addMajsoulAccountID(accountID)
+		if accountID != gameConf.currentActiveMajsoulAccountID {
+			printAccountInfo(accountID)
+			gameConf.setMajsoulAccountID(accountID)
+		}
+		return
 	}
 
-	// 当自家准备好时（msg.SeatList == nil），打印准备信息
-	if msg.SeatList == nil && msg.ReadyIDList != nil {
-		fmt.Printf("等待玩家准备 (%d/%d) %v\n", len(msg.ReadyIDList), 4, msg.ReadyIDList)
-	}
+	// 从对战 ID 列表中获取账号 ID
+	if seatList := msg.SeatList; seatList != nil {
+		// 尝试从中找到缓存账号 ID
+		for _, accountID := range seatList {
+			if accountID > 0 && gameConf.isIDExist(accountID) {
+				// 找到了，更新当前使用的账号 ID
+				if gameConf.currentActiveMajsoulAccountID != accountID {
+					printAccountInfo(accountID)
+					gameConf.setMajsoulAccountID(accountID)
+				}
+				return
+			}
+		}
 
-	// 筛去重连的消息，目前的程序不考虑重连的情况
-	if msg.IsGameStart != nil && *msg.IsGameStart {
-		return false
-	}
+		// 未找到缓存 ID
+		if gameConf.currentActiveMajsoulAccountID > 0 {
+			color.HiRed("尚未获取到您的账号 ID，请您刷新网页，或开启一局人机对战（错误信息：您的账号 ID %d 不在对战列表 %v 中）", gameConf.currentActiveMajsoulAccountID, msg.SeatList)
+			return
+		}
 
-	return true
+		// 判断是否为人机对战，若为人机对战，则获取账号 ID
+		if !util.InInts(0, msg.SeatList) {
+			return
+		}
+		for _, accountID := range msg.SeatList {
+			if accountID > 0 {
+				gameConf.addMajsoulAccountID(accountID)
+				printAccountInfo(accountID)
+				gameConf.setMajsoulAccountID(accountID)
+				return
+			}
+		}
+	}
 }
 
 func (d *majsoulRoundData) IsInit() bool {
 	msg := d.msg
-	// ResAuthGame || ActionNewRound
-	const playerNumber = 4
-	return len(msg.SeatList) == playerNumber || msg.MD5 != ""
+	// ResAuthGame || ActionNewRound RecordNewRound
+	return msg.IsGameStart != nil || msg.MD5 != ""
 }
 
-func (d *majsoulRoundData) ParseInit() (roundNumber int, benNumber int, dealer int, doraIndicator int, handTiles []int, numRedFives []int) {
+func (d *majsoulRoundData) ParseInit() (roundNumber int, benNumber int, dealer int, doraIndicators []int, handTiles []int, numRedFives []int) {
 	msg := d.msg
-	const playerNumber = 4
 
-	if len(msg.SeatList) == playerNumber {
+	if playerNumber := len(msg.SeatList); playerNumber >= 3 {
+		d.playerNumber = playerNumber
 		// 获取自家初始座位：0-第一局的东家 1-第一局的南家 2-第一局的西家 3-第一局的北家
 		for i, accountID := range msg.SeatList {
-			if accountID == d.accountID {
+			if accountID == gameConf.currentActiveMajsoulAccountID {
 				d.selfSeat = i
 				break
 			}
 		}
 		// dealer: 0=自家, 1=下家, 2=对家, 3=上家
-		dealer = (playerNumber - d.selfSeat) % playerNumber
+		dealer = (4 - d.selfSeat) % 4
 		return
+	} else if len(msg.Tiles2) > 0 {
+		if len(msg.Tiles3) > 0 {
+			d.playerNumber = 4
+		} else {
+			d.playerNumber = 3
+		}
 	}
 	dealer = -1
 
-	roundNumber = playerNumber*(*msg.Chang) + *msg.Ju
+	roundNumber = 4*(*msg.Chang) + *msg.Ju
 	benNumber = *msg.Ben
-	doraIndicator, _ = d.mustParseMajsoulTile(msg.Dora)
+	if msg.Dora != "" {
+		doraIndicator, _ := d.mustParseMajsoulTile(msg.Dora)
+		doraIndicators = append(doraIndicators, doraIndicator)
+	} else {
+		for _, dora := range msg.Doras {
+			doraIndicator, _ := d.mustParseMajsoulTile(dora)
+			doraIndicators = append(doraIndicators, doraIndicator)
+		}
+	}
 	numRedFives = make([]int, 3)
 
 	var majsoulTiles []string
 	if msg.Tiles != nil { // 实战
 		majsoulTiles = d.normalTiles(msg.Tiles)
-	} else { // 牌谱
+	} else { // 牌谱、观战
 		majsoulTiles = [][]string{msg.Tiles0, msg.Tiles1, msg.Tiles2, msg.Tiles3}[d.selfSeat]
 	}
 	for _, majsoulTile := range majsoulTiles {
@@ -276,15 +344,8 @@ func (d *majsoulRoundData) ParseInit() (roundNumber int, benNumber int, dealer i
 
 func (d *majsoulRoundData) IsSelfDraw() bool {
 	msg := d.msg
-
-	if msg.Seat == nil || msg.Moqie != nil || msg.Tile == "" {
-		return false
-	}
-
-	// FIXME: 更好的判断？
-	// ActionDealTile
-	who := d.parseWho(*msg.Seat)
-	return who == 0
+	// ActionDealTile RecordDealTile
+	return msg.Seat != nil && msg.Tile != "" && msg.Moqie == nil && d.parseWho(*msg.Seat) == 0
 }
 
 func (d *majsoulRoundData) ParseSelfDraw() (tile int, isRedFive bool, kanDoraIndicator int) {
@@ -299,8 +360,8 @@ func (d *majsoulRoundData) ParseSelfDraw() (tile int, isRedFive bool, kanDoraInd
 
 func (d *majsoulRoundData) IsDiscard() bool {
 	msg := d.msg
-	// ActionDiscardTile
-	return msg.Moqie != nil
+	// ActionDiscardTile RecordDiscardTile
+	return msg.IsLiqi != nil
 }
 
 func (d *majsoulRoundData) ParseDiscard() (who int, discardTile int, isRedFive bool, isTsumogiri bool, isReach bool, canBeMeld bool, kanDoraIndicator int) {
@@ -312,7 +373,7 @@ func (d *majsoulRoundData) ParseDiscard() (who int, discardTile int, isRedFive b
 	if msg.IsWliqi != nil && !isReach { // 兼容雀魂早期牌谱（无 IsWliqi 字段）
 		isReach = *msg.IsWliqi
 	}
-	canBeMeld = msg.Operation != nil
+	canBeMeld = msg.Operation != nil // 注意：观战模式下无此选项
 	kanDoraIndicator = -1
 	if d.isNewDora(msg.Doras) {
 		kanDoraIndicator, _ = d.mustParseMajsoulTile(msg.Doras[len(msg.Doras)-1])
@@ -322,13 +383,8 @@ func (d *majsoulRoundData) ParseDiscard() (who int, discardTile int, isRedFive b
 
 func (d *majsoulRoundData) IsOpen() bool {
 	msg := d.msg
-	// FIXME: 更好的判断？
-	// ActionChiPengGang || ActionAnGangAddGang
-	if msg.Tiles == nil {
-		return false
-	}
-	majsoulTiles := d.normalTiles(msg.Tiles)
-	return len(majsoulTiles) <= 4
+	// ActionChiPengGang RecordChiPengGang || ActionAnGangAddGang RecordAnGangAddGang
+	return msg.Tiles != nil && len(d.normalTiles(msg.Tiles)) <= 4
 }
 
 func (d *majsoulRoundData) ParseOpen() (who int, meld *model.Meld, kanDoraIndicator int) {
@@ -344,7 +400,7 @@ func (d *majsoulRoundData) ParseOpen() (who int, meld *model.Meld, kanDoraIndica
 	var meldType, calledTile int
 
 	majsoulTiles := d.normalTiles(msg.Tiles)
-	isSelfKan := len(majsoulTiles) == 1 // 加杠/暗杠
+	isSelfKan := len(majsoulTiles) == 1 // 自家加杠或暗杠
 	if isSelfKan {
 		majsoulTile := majsoulTiles[0]
 		majsoulTiles = []string{majsoulTile, majsoulTile, majsoulTile, majsoulTile}
@@ -358,7 +414,8 @@ func (d *majsoulRoundData) ParseOpen() (who int, meld *model.Meld, kanDoraIndica
 
 	if isSelfKan {
 		calledTile = meldTiles[0]
-		// 也可以通过副露来判断是加杠还是暗杠，这里简单地用 msg.Type 判断
+		// 用 msg.Type 判断是加杠还是暗杠
+		// 也可以通过是否有相关碰副露来判断是加杠还是暗杠
 		if msg.Type == majsoulMeldTypeMinkanOrKakan {
 			meldType = meldTypeKakan // 加杠
 		} else if msg.Type == majsoulMeldTypeAnkan {
@@ -388,18 +445,12 @@ func (d *majsoulRoundData) ParseOpen() (who int, meld *model.Meld, kanDoraIndica
 	if len(meldTiles) == 3 {
 		if meldTiles[0] == meldTiles[1] {
 			meldType = meldTypePon // 碰
-			//calledTile = meldTiles[0]
 		} else {
 			meldType = meldTypeChi // 吃
-			sort.Ints(meldTiles)   // 排序
-			//calledTile = d.globalDiscardTiles[len(d.globalDiscardTiles)-1]
-			//if calledTile < 0 {
-			//	calledTile = ^calledTile
-			//}
+			sort.Ints(meldTiles)
 		}
 	} else if len(meldTiles) == 4 {
 		meldType = meldTypeMinkan // 大明杠
-		//calledTile = meldTiles[0]
 	} else {
 		panic("鸣牌数据解析失败！")
 	}
@@ -427,7 +478,7 @@ func (d *majsoulRoundData) IsFuriten() bool {
 
 func (d *majsoulRoundData) IsRoundWin() bool {
 	msg := d.msg
-	// ActionHule
+	// ActionHule RecordHule
 	return msg.Hules != nil
 }
 
@@ -444,15 +495,42 @@ func (d *majsoulRoundData) ParseRoundWin() (whos []int, points []int) {
 			} else {
 				point = result.PointZimoQin + 2*result.PointZimoXian
 			}
+			if d.playerNumber == 3 {
+				// 自摸损（一个子家）
+				point -= result.PointZimoXian
+			}
 		}
 		points = append(points, point)
 	}
 	return
 }
 
+func (d *majsoulRoundData) IsRyuukyoku() bool {
+	// TODO
+	// ActionLiuJu RecordLiuJu
+	return false
+}
+
+func (d *majsoulRoundData) ParseRyuukyoku() (type_ int, whos []int, points []int) {
+	// TODO
+	return
+}
+
+// 拔北宝牌
+func (d *majsoulRoundData) IsNukiDora() bool {
+	msg := d.msg
+	// ActionBaBei RecordBaBei
+	return msg.Seat != nil && msg.Moqie != nil && msg.Tile == ""
+}
+
+func (d *majsoulRoundData) ParseNukiDora() (who int, isTsumogiri bool) {
+	msg := d.msg
+	return d.parseWho(*msg.Seat), *msg.Moqie
+}
+
+// 在最后处理该项
 func (d *majsoulRoundData) IsNewDora() bool {
 	msg := d.msg
-	// 在最后处理该项
 	// ActionDealTile
 	return d.isNewDora(msg.Doras)
 }

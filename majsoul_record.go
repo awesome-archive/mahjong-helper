@@ -21,6 +21,8 @@ type majsoulRecordBaseInfo struct {
 	StartTime int64  `json:"start_time"`
 	EndTime   int64  `json:"end_time"`
 
+	Config *majsoulGameConfig `json:"config"`
+
 	Accounts []_majsoulRecordAccount `json:"accounts"`
 }
 
@@ -37,6 +39,7 @@ func (i *majsoulRecordBaseInfo) String() string {
 
 	const timeFormat = "2006-01-02 15:04:05"
 	output := fmt.Sprintf("%s\n从 %s\n到 %s\n\n", i.UUID, time.Unix(i.StartTime, 0).Format(timeFormat), time.Unix(i.EndTime, 0).Format(timeFormat))
+
 	maxAccountID := 0
 	for _, account := range i.Accounts {
 		maxAccountID = util.MaxInt(maxAccountID, account.AccountID)
@@ -52,41 +55,49 @@ func (i *majsoulRecordBaseInfo) getSelfSeat(accountID int) (int, error) {
 	if len(i.Accounts) == 0 {
 		return -1, fmt.Errorf("牌谱基本信息为空")
 	}
-	if len(i.Accounts) == 3 {
-		return -1, fmt.Errorf("暂不支持三人麻将")
-	}
 	for _, account := range i.Accounts {
 		if account.AccountID == accountID {
 			return account.Seat, nil
 		}
 	}
-	return -1, fmt.Errorf("找不到用户 %d", accountID)
-}
-
-// 获取第一局的庄家：0=自家, 1=下家, 2=对家, 3=上家
-func (i *majsoulRecordBaseInfo) getFistRoundDealer(accountID int) (firstRoundDealer int, err error) {
-	selfSeat, err := i.getSelfSeat(accountID)
-	if err != nil {
-		return
-	}
-	const playerNumber = 4
-	return (playerNumber - selfSeat) % playerNumber, nil
+	// 若没有，则以东家为主视角
+	return 0, nil
 }
 
 //
 
-// 牌谱中的单个操作信息
+// 牌谱、观战中的单个操作信息
 type majsoulRecordAction struct {
 	Name   string          `json:"name"`
 	Action *majsoulMessage `json:"data"`
 }
 
-func parseMajsoulRecordAction(actions []*majsoulRecordAction) (roundActionsList [][]*majsoulRecordAction, err error) {
+type majsoulRoundActions []*majsoulRecordAction
+
+func (l majsoulRoundActions) append(action *majsoulRecordAction) (majsoulRoundActions, error) {
+	if action == nil {
+		return nil, fmt.Errorf("数据异常：拿到的操作内容为空")
+	}
+	newL := l
+
+	if action.Name == "RecordNewRound" {
+		newL = majsoulRoundActions{action}
+	} else {
+		if len(newL) == 0 {
+			return nil, fmt.Errorf("数据异常：未收到 RecordNewRound")
+		}
+		newL = append(newL, action)
+	}
+
+	return newL, nil
+}
+
+func parseMajsoulRecordAction(actions []*majsoulRecordAction) (roundActionsList []majsoulRoundActions, err error) {
 	if len(actions) == 0 {
 		return nil, fmt.Errorf("数据异常：拿到的牌谱内容为空")
 	}
 
-	var currentRoundActions []*majsoulRecordAction
+	var currentRoundActions majsoulRoundActions
 	for _, action := range actions {
 		if action.Name == "RecordNewRound" {
 			if len(currentRoundActions) > 0 {

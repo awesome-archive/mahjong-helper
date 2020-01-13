@@ -265,7 +265,7 @@ func bestHumanDiscardTile2(t *testing.T, humanTiles string, doraIndicatorHumanTi
 		for _, tile := range doraIndicators {
 			playerInfo.LeftTiles34[tile]--
 		}
-		playerInfo.DoraTiles = model.DoraList(doraIndicators)
+		playerInfo.DoraTiles = model.DoraList(doraIndicators, false)
 	}
 	playerInfo.NumRedFives = numRedFives
 	_, results, _ := CalculateShantenWithImproves14(playerInfo)
@@ -349,7 +349,7 @@ func TestFuritenBestDiscard(t *testing.T) {
 	assert.Equal("6p", bestHumanDiscardTileWhenFuriten(t, "455678m 11566p 234s", "", "9m"))
 }
 
-// 何切 300
+// TODO: 测试何切 300 和 301
 func TestQ300(t *testing.T) {
 	assert := assert.New(t)
 

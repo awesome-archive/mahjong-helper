@@ -67,6 +67,9 @@ type Hand13AnalysisResult struct {
 	// 役种
 	YakuTypes map[int]struct{}
 
+	// （鸣牌时）是否片听
+	IsPartWait bool
+
 	// 宝牌个数（手牌+副露）
 	DoraCount int
 
@@ -104,10 +107,11 @@ func (r *Hand13AnalysisResult) speedScore() float64 {
 }
 
 func (r *Hand13AnalysisResult) mixedRoundPoint() float64 {
+	const weight = -1500
 	if r.RiichiPoint > 0 {
-		return r.AvgAgariRate/100*(r.RiichiPoint+1500) - 1500
+		return r.AvgAgariRate/100*(r.RiichiPoint+1500) + weight
 	}
-	return r.AvgAgariRate/100*(r.DamaPoint+1500) - 1500
+	return r.AvgAgariRate/100*(r.DamaPoint+1500) + weight
 }
 
 // 调试用
@@ -341,6 +345,9 @@ func (n *shantenSearchNode13) analysis(playerInfo *model.PlayerInfo, considerImp
 					}
 				}
 				result13.AvgAgariRate = agariRate
+
+				// 是否片听
+				result13.IsPartWait = len(pointResults) < len(waits.AvailableTiles())
 			}
 		}
 	}
@@ -413,6 +420,13 @@ func (n *shantenSearchNode13) analysis(playerInfo *model.PlayerInfo, considerImp
 	return
 }
 
+func _stopShanten(shanten int) int {
+	if shanten >= 3 {
+		return shanten - 1
+	}
+	return shanten - 2
+}
+
 // 3k+1 张牌，计算向听数、进张、改良等（考虑了剩余枚数）
 func CalculateShantenWithImproves13(playerInfo *model.PlayerInfo) (r *Hand13AnalysisResult) {
 	if len(playerInfo.LeftTiles34) == 0 {
@@ -420,7 +434,7 @@ func CalculateShantenWithImproves13(playerInfo *model.PlayerInfo) (r *Hand13Anal
 	}
 
 	shanten := CalculateShanten(playerInfo.HandTiles34)
-	shantenSearchRoot := _search13(shanten, playerInfo, shanten-1)
+	shantenSearchRoot := _search13(shanten, playerInfo, _stopShanten(shanten))
 	return shantenSearchRoot.analysis(playerInfo, true)
 }
 
@@ -532,6 +546,9 @@ type Hand14AnalysisResult struct {
 	// 需要切的牌
 	DiscardTile int
 
+	// 切的是否为宝牌
+	IsDiscardDoraTile bool
+
 	// 切的牌的价值（宝牌或宝牌周边）
 	DiscardTileValue tileValue
 
@@ -542,6 +559,9 @@ type Hand14AnalysisResult struct {
 	Result13 *Hand13AnalysisResult
 
 	DiscardHonorTileRisk int
+
+	// 剩余可以摸的牌数
+	LeftDrawTilesCount int
 
 	// 副露信息（没有副露就是 nil）
 	// 比如用 23m 吃了牌，OpenTiles 就是 [1,2]
@@ -730,8 +750,10 @@ func (n *shantenSearchNode14) analysis(playerInfo *model.PlayerInfo, considerImp
 
 		// 记录切牌后的分析结果
 		r14 := &Hand14AnalysisResult{
-			DiscardTile: discardTile,
-			Result13:    result13,
+			DiscardTile:        discardTile,
+			IsDiscardDoraTile:  InInts(discardTile, playerInfo.DoraTiles),
+			Result13:           result13,
+			LeftDrawTilesCount: playerInfo.LeftDrawTilesCount,
 		}
 		results = append(results, r14)
 
@@ -761,23 +783,21 @@ func (n *shantenSearchNode14) analysis(playerInfo *model.PlayerInfo, considerImp
 	}
 
 	improveFirst := func(l []*Hand14AnalysisResult) bool {
-		if len(l) <= 1 {
+		if !considerImprove || len(l) <= 1 {
 			return false
 		}
 
 		shanten := l[0].Result13.Shanten
-		// 两向听及以下进张优先，改良其次
-		if shanten <= 2 {
+		// 一向听及以下着眼于进张，改良其次
+		if shanten <= 1 {
 			return false
 		}
 
-		maxWaitsCount := 0
-		for _, r14 := range l {
-			maxWaitsCount = MaxInt(maxWaitsCount, r14.Result13.Waits.AllCount())
-		}
-
-		// 三向听及以上的垃圾进张考虑改良
-		return maxWaitsCount <= 9*shanten+3
+		// 判断七对和一般型的向听数是否相同，若七对更小则改良优先
+		tiles34 := playerInfo.HandTiles34
+		shantenChiitoi := CalculateShantenOfChiitoi(tiles34)
+		shantenNormal := CalculateShantenOfNormal(tiles34, CountOfTiles34(tiles34))
+		return shantenChiitoi < shantenNormal
 	}
 
 	improveFst := improveFirst(results)
@@ -793,10 +813,7 @@ func CalculateShantenWithImproves14(playerInfo *model.PlayerInfo) (shanten int, 
 	}
 
 	shanten = CalculateShanten(playerInfo.HandTiles34)
-	stopAtShanten := shanten - 2
-	if shanten >= 3 {
-		stopAtShanten = shanten - 1
-	}
+	stopAtShanten := _stopShanten(shanten)
 	shantenSearchRoot := searchShanten14(shanten, playerInfo, stopAtShanten)
 	results = shantenSearchRoot.analysis(playerInfo, true)
 	incShantenSearchRoot := searchShanten14(shanten+1, playerInfo, stopAtShanten+1)

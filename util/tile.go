@@ -3,6 +3,7 @@ package util
 import (
 	"fmt"
 	"sort"
+	"math/rand"
 )
 
 var Mahjong = [...]string{
@@ -28,6 +29,20 @@ var MahjongZH = [...]string{
 
 var YaochuTiles = [...]int{0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33}
 
+func TilesToMahjongZH(tiles []int) (words []string) {
+	for _, tile := range tiles {
+		words = append(words, MahjongZH[tile])
+	}
+	return
+}
+
+func TilesToMahjongZHInterface(tiles []int) (words []interface{}) {
+	for _, tile := range tiles {
+		words = append(words, MahjongZH[tile])
+	}
+	return
+}
+
 // 进张
 // map[进张牌]剩余数
 type Waits map[int]int
@@ -37,6 +52,23 @@ func (w Waits) AllCount() (count int) {
 		count += cnt
 	}
 	return count
+}
+
+// 剩余数不为零的进张
+func (w Waits) AvailableTiles() []int {
+	if len(w) == 0 {
+		return nil
+	}
+
+	tileIndexes := []int{}
+	for idx, left := range w {
+		if left > 0 {
+			tileIndexes = append(tileIndexes, idx)
+		}
+	}
+	sort.Ints(tileIndexes)
+
+	return tileIndexes
 }
 
 func (w Waits) indexes() []int {
@@ -92,6 +124,19 @@ func (w Waits) tilesZH() []string {
 
 func (w Waits) String() string {
 	return fmt.Sprintf("%d 进张 %s", w.AllCount(), TilesToStrWithBracket(w.indexes()))
+}
+
+func (w Waits) Equals(w1 Waits) bool {
+	tiles0, tiles1 := w.AvailableTiles(), w1.AvailableTiles()
+	if len(tiles0) != len(tiles1) {
+		return false
+	}
+	for i := range tiles0 {
+		if tiles0[i] != tiles1[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func isMan(tile int) bool {
@@ -170,18 +215,32 @@ func OutsideTiles(tile int) (outsideTiles []int) {
 	if tile >= 27 {
 		return
 	}
-	switch tile % 9 {
-	case 1, 2, 3:
+	switch tile%9 + 1 {
+	case 1, 9:
+		return
+	case 2, 3, 4:
 		for i := tile - tile%9; i < tile; i++ {
 			outsideTiles = append(outsideTiles, i)
 		}
-	case 4:
+	case 5:
 		// 早巡切5，37 比较安全（TODO 还有片筋A 46）
 		outsideTiles = append(outsideTiles, tile-2, tile+2)
-	case 5, 6, 7:
+	case 6, 7, 8:
 		for i := tile - tile%9 + 8; i > tile; i-- {
 			outsideTiles = append(outsideTiles, i)
 		}
+	default:
+		panic(fmt.Errorf("[OutsideTiles] 代码有误: tile = %d", tile))
 	}
 	return
+}
+
+// 随机补充一张牌
+func RandomAddTile(tiles34 []int) {
+	for {
+		if tile := rand.Intn(34); tiles34[tile] < 4 {
+			tiles34[tile]++
+			break
+		}
+	}
 }

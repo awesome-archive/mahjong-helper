@@ -64,7 +64,7 @@ func (l WallSafeTileList) FilterWithHands(handsTiles34 []int) WallSafeTileList {
 	return newSafeTiles34
 }
 
-// 根据剩余牌 leftTiles34 中的某些牌是否为 0，来判断哪些牌非常安全（Double No Chance：只输单骑、双碰）
+// 根据剩余牌 leftTiles34 中的某些牌是否为 0（壁），来判断哪些牌较为安全（Double No Chance：只输单骑、双碰）
 func CalcDNCSafeTiles(leftTiles34 []int) (dncSafeTiles WallSafeTileList) {
 	nc := func(idx int) bool {
 		return leftTiles34[idx] == 0
@@ -116,7 +116,46 @@ func CalcDNCSafeTiles(leftTiles34 []int) (dncSafeTiles WallSafeTileList) {
 	return
 }
 
-// 根据剩余牌 leftTiles34 中的某些牌是否为 0，来判断哪些牌较为安全（No Chance：只输单骑、双碰、边张、坎张）
+// 根据剩余牌 leftTiles34 中的某些牌是否为 0（壁），来判断哪些牌较为安全（Double No Chance：只输单骑、双碰）
+// 这里加上现物，相比 CalcDNCSafeTiles 可以得到更加精确的结果
+// 注：虽然说在 4 为现物的情况下，1 也可以认为是只输单骑、双碰的，但这不在壁的讨论范围内，故不考虑这种情况
+func CalcDNCSafeTilesWithDiscards(leftTiles34 []int, safeTiles34 []bool) (dncSafeTiles WallSafeTileList) {
+	nc := func(idx int) bool {
+		return leftTiles34[idx] == 0
+	}
+
+	const safeType = WallSafeTypeDoubleNoChance
+
+	dncSafeTiles = CalcDNCSafeTiles(leftTiles34)
+
+	// 在相邻一侧牌为壁的情况下，检查另一侧是否有现物筋牌
+	// 例如 3，相邻的 2 为壁且 6 为现物，则其为 DNC。其他的 2~8 同理（456 要判断左侧或右侧，满足一种即为 DNC）
+	for i := 0; i < 3; i++ {
+		for j := 1; j < 3; j++ {
+			idx := 9*i + j
+			if nc(idx-1) && safeTiles34[idx+3] {
+				dncSafeTiles = append(dncSafeTiles, WallSafeTile{idx, safeType})
+			}
+		}
+		for j := 3; j < 6; j++ {
+			idx := 9*i + j
+			if nc(idx-1) && safeTiles34[idx+3] || nc(idx+1) && safeTiles34[idx-3] {
+				dncSafeTiles = append(dncSafeTiles, WallSafeTile{idx, safeType})
+			}
+		}
+		for j := 6; j < 8; j++ {
+			idx := 9*i + j
+			if nc(idx+1) && safeTiles34[idx-3] {
+				dncSafeTiles = append(dncSafeTiles, WallSafeTile{idx, safeType})
+			}
+		}
+	}
+
+	dncSafeTiles.sort()
+	return
+}
+
+// 根据剩余牌 leftTiles34 中的某些牌是否为 0（壁），来判断哪些牌较为安全（No Chance：不输两面）
 func CalcNCSafeTiles(leftTiles34 []int) (ncSafeTiles WallSafeTileList) {
 	nc := func(idx int) bool {
 		return leftTiles34[idx] == 0
@@ -155,7 +194,7 @@ func CalcNCSafeTiles(leftTiles34 []int) (ncSafeTiles WallSafeTileList) {
 	return
 }
 
-// 根据剩余牌 leftTiles34 中的某些牌是否为 1，来判断哪些牌较为安全（One Chance：早巡大概率只输单骑、双碰、边张、坎张）
+// 根据剩余牌 leftTiles34 中的某些牌是否为 1（薄壁），来判断哪些牌较为安全（One Chance：早巡大概率不输两面）
 func CalcOCSafeTiles(leftTiles34 []int) (ocSafeTiles WallSafeTileList) {
 	oc := func(idx int) bool {
 		return leftTiles34[idx] == 1
